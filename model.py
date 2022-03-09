@@ -1,5 +1,3 @@
-# from torch_geometric.data.dataloader import Collater
-
 from dataloader import MOFDataset
 from tqdm import tqdm
 import numpy as np
@@ -7,27 +5,14 @@ import matplotlib.pyplot as plt
 import torch
 from torch_geometric.loader import DataLoader
 import torch.nn as nn
-import torch.nn.functional as F
-import torch.utils.data as data_utils
 from torch_geometric.data import Data
-# import torch_geometric.loader.DataLoader as DataLoader
-from typing import Union, List
-
-# from collections.abc import Mapping, Sequence
-
 import torch.utils.data
-from torch.utils.data.dataloader import default_collate
-
-# from torch_geometric.data import Data, HeteroData, Dataset, Batch
-from torch import nn
-# from torch_geometric.nn import global_mean_pool as gap
-# from torch_geometric.nn import global_max_pool as gmp
 from torch_geometric.nn import global_add_pool as gaddp
 
 from MOLGCN import MOLGCN
 from DGCN import DGCN
-# from D2GCN import D2GCN
 
+np.set_printoptions(threshold=3000)
 
 class PairData(Data):
     def __init__(self, x1=None, edge_index1=None, edge_attr1=None, x2=None, edge_index2=None, edge_attr2=None, y=None):
@@ -48,36 +33,12 @@ class PairData(Data):
         else:
             return super(PairData, self).__inc__(key, value, *args, **kwargs)
 
-#
-#
-# class MOF_Net(torch.nn.Module):
-#     def __init__(self,
-#                  input_features=None,
-#                  mlp=None):
-#         super(MOF_Net, self).__init__()
-#         if mlp:
-#             self.nn = mlp
-#         else:
-#             raise Exception("Must set one of either input_features or mlp ")
-#
-#         self.conv = MOLGCN(self.nn)
-#
-#     def forward(self, data):
-#         x, edge_index, batch, edge_attr = data.x, data.edge_index, data.batch, data.edge_attr
-#         # print(edge_attr.shape)
-#         x = self.conv(x, edge_index, edge_attr)
-#         #         print(x.shape)
-#         x = gaddp(x, batch)
-#         #         print(x.shape)
-#         x = x.squeeze() / 2
-#         #         print(x.shape)
-#         return x
-
 
 class MOF_Net(torch.nn.Module):
     def __init__(self,
                  input_features=None,
-                 mlp=True):
+                 mlp=None,
+                 mlp2=None):
         super(MOF_Net, self).__init__()
         if mlp:
             self.nn = mlp
@@ -85,49 +46,20 @@ class MOF_Net(torch.nn.Module):
             raise Exception("Must set one of either input_features or mlp ")
 
         self.conv = MOLGCN(self.nn)
+        if mlp2:
+            self.nn = mlp2
         self.conv2 = DGCN(self.nn)
-        # self.conv3 = DGCN(self.nn)
 
     def forward(self, data):
-        x1, x2, edge_index1, edge_index2, batch, edge_attr1, edge_attr2 = data.x1, data.x2, data.edge_index1, data.edge_index2, data.batch, data.edge_attr1, data.edge_attr2
-        # print(edge_attr.shape)
-        # x = Xi, edge_index = Xj, edge_attr = eij
+        x1, x2, edge_index1, edge_index2, x1_batch, x2_batch, edge_attr1, edge_attr2 = data.x1, data.x2, data.edge_index1, data.edge_index2, data.x1_batch, data.x2_batch, data.edge_attr1, data.edge_attr2
 
+        e_t = self.conv2(x2, edge_index2, edge_attr2)
 
-        edge_attr1 = self.conv2(edge_attr1, x2, edge_index2, edge_attr2)
-        #         print(x.shape)
-
-        x1 = self.conv(x1, edge_index1, edge_attr1)
-        x1 = gaddp(x1, batch)
-        #         print(x.shape)
+        x1 = self.conv(x1, edge_index1, e_t)
+        x1 = gaddp(x1, x1_batch)
         x1 = x1.squeeze() / 2
-        #         print(x.shape)
+
         return x1
-
-
-class MOF_Net3(torch.nn.Module):
-    def __init__(self,
-                 input_features=None,
-                 mlp=None):
-        super(MOF_Net3, self).__init__()
-        if mlp:
-            self.nn = mlp
-        else:
-            raise Exception("Must set one of either input_features or mlp ")
-
-        self.conv = MOLGCN(self.nn)
-
-    def forward(self, data):
-        x, edge_index, batch, edge_attr = data.x, data.edge_index, data.batch, data.edge_attr
-        # print(edge_attr.shape)
-        x = self.conv(x, edge_index, edge_attr)
-        #         print(x.shape)
-        x = gaddp(x, batch)
-        #         print(x.shape)
-        x = x.squeeze() / 2
-        #         print(x.shape)
-
-        return x
 
 
 def run(loader,
@@ -136,7 +68,6 @@ def run(loader,
         loss_func,
         device,
         train=True):
-    average_batch_loss = 0
 
     def run_():
         total = 0
@@ -148,28 +79,31 @@ def run(loader,
             y = data.y.to(device)
             loss = loss_func(y, y_out)
 
-            if (train):
+            if train:
                 optimizer.zero_grad()
                 loss.backward()
+                # nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0, norm_type=2)
+                nn.utils.clip_grad_value_(model.parameters(), clip_value=1.0)
                 optimizer.step()
 
             total += loss.item()
+
         return total / len(loader)
 
-    if (train):
+    if train:
         average_batch_loss = run_()
     else:
-        with torch.no_grad():  # This reduces memory usage
+        with torch.no_grad():
             average_batch_loss = run_()
     return average_batch_loss
 
 
 if __name__ == '__main__':
 
-    dataset2 = MOFDataset('FIGXAU_V2.csv', '.')
+    dataset2 = MOFDataset('FIGXAU_V4.csv', '.')
     dataset2 = dataset2.shuffle()
 
-    batch_size = 16
+    batch_size = 32
 
     dataset = []
     for i in range(len(dataset2)):
@@ -178,38 +112,48 @@ if __name__ == '__main__':
 
     one_tenth_length = int(len(dataset) * 0.1)
     train_dataset = dataset[:one_tenth_length * 8]
-    train_loader = DataLoader(train_dataset, batch_size=batch_size)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, follow_batch=['x1', 'x2'])
     count = 0
-    # for batch in train_loader:
-    #     count += 1
-    #     print(batch)
-    #     print("e_i1: ",batch.edge_index1.shape, batch.edge_index1)
-    #     print("x1: ", batch.x1)
-    #     print("e_a1: ", batch.edge_attr1)
-    #
-    #     print("*"*100)
-    #
-    #     print("e_i2: ", batch.edge_index2)
-    #     print("x1: ", batch.x2)
-    #     print("e_a1: ", batch.edge_attr2)
-    #     if count == 1:
-    #         break
-    #
+
     val_dataset = dataset[one_tenth_length * 8:]
-    val_loader = DataLoader(val_dataset, batch_size=batch_size)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, follow_batch=['x1', 'x2'])
 
     print(train_dataset[0])
+    mlp = nn.Sequential(nn.Linear(5, 1024),
+                        nn.ReLU(),
+                        nn.Dropout(0.5),
+                        nn.Linear(1024, 256),
+                        nn.ReLU(),
+                        nn.Dropout(0.5),
+                        nn.Linear(256, 32),
+                        nn.ReLU(),
+                        nn.Dropout(0.5),
+                        nn.Linear(32, 1)
+                        )
+    mlp2 = nn.Sequential(nn.Linear(11, 1024),
+                        nn.ReLU(),
+                        nn.Dropout(0.5),
+                        nn.Linear(1024, 256),
+                        nn.ReLU(),
+                        nn.Dropout(0.5),
+                        nn.Linear(256, 32),
+                        nn.ReLU(),
+                        nn.Dropout(0.5),
+                        nn.Linear(32, 1)
+                        )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = MOF_Net(9).to(device)
+    # model.load_state_dict(torch.load('cp_model.pt'))
+    model = MOF_Net(11, mlp, mlp2).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
-    loss_func = nn.MSELoss()
-    # #
-    # def init_params(size, variance=1.0):
-    #     return (torch.randn(size, dtype=torch.float) * variance).requires_grad_()
+    loss_func = nn.SmoothL1Loss()
+    # model.load_state_dict(torch.load('cp_model.pt'))
 
-    for epoch in range(10):
-        print("*" * 100)
+    train_loss_list = []
+    val_loss_list = []
+    warmup_batch = next(iter(train_loader))
+
+    for epoch in range(40):
         training_loss = run(train_loader, model, optimizer, loss_func, device, True)
         val_loss = run(val_loader,
                        model,
@@ -217,7 +161,24 @@ if __name__ == '__main__':
                        loss_func,
                        device,
                        False)
+        train_loss_list.append(training_loss)
+        val_loss_list.append(val_loss)
+        print("Epoch {} : Training Loss: {:.4f} \t Validation Loss: {:.4f} ". \
+              format(epoch + 1, training_loss, val_loss))
 
-        print('\n')
-        print("Epoch {} : Training Loss: {:.4f} \t Validation Loss: {:.4f} ".format(epoch + 1, training_loss, val_loss))
-        print('\n')
+        print(model.nn[0].weight)
+
+        print(model.nn[3].weight)
+        print(model.nn[6].weight)
+        print(model.nn[9].weight)
+
+
+
+
+    with torch.no_grad():
+        data2 = warmup_batch.to(device)
+        y = model(data2)
+        print("Predicted: \n \t", y)
+        print("Actual: \n \t", data2.y)
+    #
+    # torch.save(model.state_dict(), './cp_model.pt')

@@ -30,19 +30,19 @@ class DGCN(MessagePassing):
     def reset_parameters(self):
         self.nn.reset_parameters()
 
-    def forward(self, edge_attr1, x2, edge_index, edge_attr2, size=None):
+    def forward(self, x, edge_index, edge_attr, size=None):
 
-        out = self.propagate(edge_index, x=x2, edge_attr=edge_attr2, edge_attr1=edge_attr1, size=size)
+        if isinstance(x, Tensor):
+            x: PairTensor = (x, x)
+
+        out = self.propagate(edge_index, x=x, edge_attr=edge_attr, size=size)
 
         return out
 
-    def message(self, x, edge_attr, edge_attr1):
-        print(edge_attr1.shape)
-        print(x.shape)
-        print(edge_attr.shape)
-        #
-        # angles = edge_attr2_i + edge_attr2_j
+    def message(self, x_i, x_j, edge_attr):
 
-        z = torch.cat([x, edge_attr], dim=-1)
-
+        z = torch.cat([x_i, x_j, edge_attr], dim=-1)
+        # print(bonds.shape)
+        # z = torch.cat([bonds, edge_attr], dim=-1)
+        # print(z.shape)
         return self.nn(z)
